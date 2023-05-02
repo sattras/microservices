@@ -1,0 +1,36 @@
+server:
+  port: 9083
+
+spring:
+  application:
+    name: stock-service
+  main:
+    web-application-type: reactive
+  data:
+    mongodb:
+      uri: mongodb://localhost:30001,localhost:30002,localhost:30003/stock?replicaSet=rs0
+      database: stock
+
+management:
+  endpoints:
+    web.exposure.include: "*"
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        service.stock.allocate: true
+        service.stock.cancel: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+
+logging:
+  level:
+    root: info
+    com.acme: debug
+  pattern:
+    level: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}]"

@@ -1,0 +1,36 @@
+server:
+  port: 9082
+
+spring:
+  application:
+    name: payment-service
+  main:
+    web-application-type: reactive
+  data:
+    mongodb:
+      uri: mongodb://localhost:30001,localhost:30002,localhost:30003/payment?replicaSet=rs0
+      database: payment
+
+management:
+  endpoints:
+    web.exposure.include: "*"
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        service.payment.create: true
+        service.payment.cancel: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+
+logging:
+  level:
+    root: info
+    com.acme: debug
+  pattern:
+    level: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}]"

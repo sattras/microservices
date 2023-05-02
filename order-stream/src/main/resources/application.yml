@@ -1,0 +1,59 @@
+server:
+  port: 9081
+
+spring:
+  application:
+    name: order-stream
+  main:
+    web-application-type: reactive
+  data:
+    mongodb:
+      uri: mongodb://localhost:30001,localhost:30002,localhost:30003/order?replicaSet=rs0
+      database: order
+  kafka:
+    producer:
+      bootstrap-servers: localhost:9092
+      key-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      properties:
+        schema:
+          registry:
+            url: http://localhost:8081
+    consumer:
+      bootstrap-servers: localhost:9092
+      key-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+      properties:
+        schema:
+          registry:
+            url: http://localhost:8081
+        specific:
+          avro:
+            reader: true
+
+management:
+  endpoints:
+    web.exposure.include: "*"
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        stream.order.create: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+
+logging:
+  level:
+    root: info
+    com.acme: debug
+  pattern:
+    level: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+remote-url:
+  payment-service: http://localhost:9082
+  stock-service: http://localhost:9083

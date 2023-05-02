@@ -1,0 +1,12 @@
+{
+  "type":"record",
+  "name":"EventKey",
+  "namespace":"com.acme.kafka.outbox.avro",
+  "fields":[
+    {
+      "name":"eventId",
+      "type":"string"
+    }
+  ],
+  "connect.name":"com.acme.kafka.outbox.avro.EventKey"
+}

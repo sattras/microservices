@@ -1,0 +1,12 @@
+global:
+    scrape_interval: 2s
+    evaluation_interval: 2s
+
+scrape_configs:
+    - job_name: 'prometheus'
+      static_configs:
+          - targets: ['prometheus:9090']
+    - job_name: 'apps'
+      metrics_path: '/actuator/prometheus'
+      static_configs:
+        - targets: ['order-service:9080','order-stream:9080','payment-service:9080','stock-service:9080']

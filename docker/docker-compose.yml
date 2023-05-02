@@ -1,0 +1,291 @@
+version: "3.8"
+
+services:
+  mongo1:
+    image: mongo:4.2
+    container_name: mongo1
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "30001"]
+    volumes:
+      - ./data/mongo-1:/data/db
+    ports:
+      - 30001:30001
+    healthcheck:
+      test: test $$(echo "rs.initiate({_id:'rs0',members:[{_id:0,host:\"mongo1:30001\"},{_id:1,host:\"mongo2:30002\"},{_id:2,host:\"mongo3:30003\"}]}).ok || rs.status().ok" | mongo --port 30001 --quiet) -eq 1
+      interval: 10s
+      start_period: 30s
+
+  mongo2:
+    image: mongo:4.2
+    container_name: mongo2
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "30002"]
+    volumes:
+      - ./data/mongo-2:/data/db
+    ports:
+      - 30002:30002
+
+  mongo3:
+    image: mongo:4.2
+    container_name: mongo3
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "30003"]
+    volumes:
+      - ./data/mongo-3:/data/db
+    ports:
+      - 30003:30003
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.1.1
+    container_name: zookeeper
+    ports:
+      - 2181:2181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  broker:
+    image: confluentinc/cp-server:7.1.1
+    container_name: broker
+    depends_on:
+      - zookeeper
+    ports:
+      - 9092:9092
+      - 9101:9101
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    command: sh -c "((sleep 15 && kafka-topics --create --zookeeper zookeeper:2181 --replication-factor 1 --partitions 1 --topic order_outbox_events)&) && /etc/confluent/docker/run "
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.1.1
+    container_name: schema-registry
+    depends_on:
+      - broker
+    ports:
+      - 8081:8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+  connect:
+    build:
+      context: ..
+      dockerfile: docker/kafka-connect/Dockerfile
+    container_name: connect
+    depends_on:
+      - broker
+      - schema-registry
+    ports:
+      - "8083:8083"
+      - "8101:8101"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_TIMEOUT_MS: 300000
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_PRODUCER_BATCH_SIZE: 524288
+      CONNECT_PRODUCER_LINGER_MS: 5000
+      CONNECT_PRODUCER_MAX_REQUEST_SIZE: 8388608
+      CONNECT_PRODUCER_PARTITIONER_CLASS: org.apache.kafka.clients.producer.internals.DefaultPartitioner
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_JMX_OPTS: "-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false"
+      KAFKA_JMX_PORT: "8101"
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop
+    container_name: kafdrop
+    depends_on:
+      - "broker"
+    ports:
+      - "19000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "broker:29092"
+      SCHEMAREGISTRY_CONNECT: "http://schema-registry:8081"
+      JVM_OPTS: "-Xms16M -Xmx48M -Xss180K -XX:-TieredCompilation -XX:+UseStringDeduplication -noverify"
+
+  order-service:
+    build:
+      context: ..
+      dockerfile: order-service/Dockerfile
+    container_name: order-service
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '256M'
+        reservations:
+          cpus: '0.25'
+          memory: '128M'
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    ports:
+      - "9080:9080"
+      - "5555:5555"
+    environment:
+      SERVER_PORT: 9080
+      SPRING_DATA_MONGODB_URI: "mongodb://mongo1:30001,mongo2:30002,mongo3:30003/order?replicaSet=rs0"
+      SPRING_DATA_MONGODB_DATABASE: "order"
+      LOGGING_LEVEL_ROOT: "warn"
+
+  order-stream:
+    build:
+      context: ..
+      dockerfile: order-stream/Dockerfile
+    container_name: order-stream
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '256M'
+        reservations:
+          cpus: '0.25'
+          memory: '128M'
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+      - broker
+      - schema-registry
+    ports:
+      - "9081:9080"
+      - "5556:5555"
+    environment:
+      SERVER_PORT: 9080
+      SPRING_DATA_MONGODB_URI: "mongodb://mongo1:30001,mongo2:30002,mongo3:30003/order?replicaSet=rs0"
+      SPRING_DATA_MONGODB_DATABASE: "order"
+      SPRING_KAFKA_PRODUCER_BOOTSTRAP_SERVERS: "broker:29092"
+      SPRING_KAFKA_PRODUCER_KEY_SERIALIZER: "io.confluent.kafka.serializers.KafkaAvroSerializer"
+      SPRING_KAFKA_PRODUCER_VALUE_SERIALIZER: "io.confluent.kafka.serializers.KafkaAvroSerializer"
+      SPRING_KAFKA_PRODUCER_PROPERTIES_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      SPRING_KAFKA_CONSUMER_BOOTSTRAP_SERVERS: "broker:29092"
+      SPRING_KAFKA_CONSUMER_KEY_DESERIALIZER: "io.confluent.kafka.serializers.KafkaAvroDeserializer"
+      SPRING_KAFKA_CONSUMER_VALUE_DESERIALIZER: "io.confluent.kafka.serializers.KafkaAvroDeserializer"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_SPECIFIC_AVRO_READER: "true"
+      REMOTE_URL_PAYMENT_SERVICE: "http://payment-service:9080"
+      REMOTE_URL_STOCK_SERVICE: "http://stock-service:9080"
+      LOGGING_LEVEL_ROOT: "warn"
+
+  payment-service:
+    build:
+      context: ..
+      dockerfile: payment-service/Dockerfile
+    container_name: payment-service
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '256M'
+        reservations:
+          cpus: '0.25'
+          memory: '128M'
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    ports:
+      - "9082:9080"
+      - "5557:5555"
+    environment:
+      SERVER_PORT: 9080
+      SPRING_DATA_MONGODB_URI: "mongodb://mongo1:30001,mongo2:30002,mongo3:30003/payment?replicaSet=rs0"
+      SPRING_DATA_MONGODB_DATABASE: "payment"
+      LOGGING_LEVEL_ROOT: "warn"
+
+  stock-service:
+    build:
+      context: ..
+      dockerfile: stock-service/Dockerfile
+    container_name: stock-service
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '256M'
+        reservations:
+          cpus: '0.25'
+          memory: '128M'
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    ports:
+      - "9083:9080"
+      - "5558:5555"
+    environment:
+      SERVER_PORT: 9080
+      SPRING_DATA_MONGODB_URI: "mongodb://mongo1:30001,mongo2:30002,mongo3:30003/stock?replicaSet=rs0"
+      SPRING_DATA_MONGODB_DATABASE: "stock"
+      LOGGING_LEVEL_ROOT: "warn"
+
+  tempo:
+    image: grafana/tempo
+    container_name: tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./etc/tempo/tempo-local.yaml:/etc/tempo.yaml:ro
+      - ./data/tempo:/tmp/tempo
+    ports:
+      - "14268"  # jaeger ingest
+      - "9411:9411" # zipkin
+
+  loki:
+    image: grafana/loki
+    container_name: loki
+    command: [ "-config.file=/etc/loki/local-config.yaml" ]
+    ports:
+      - "3100:3100"                                   # loki needs to be exposed so it receives logs
+    environment:
+      - JAEGER_AGENT_HOST=tempo
+      - JAEGER_ENDPOINT=http://tempo:14268/api/traces # send traces to Tempo
+      - JAEGER_SAMPLER_TYPE=const
+      - JAEGER_SAMPLER_PARAM=1
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - --enable-feature=exemplar-storage
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    volumes:
+      - ./etc/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./etc/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+      - "3000:3000"

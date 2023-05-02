@@ -1,0 +1,36 @@
+server:
+  port: 9080
+
+spring:
+  application:
+    name: order-service
+  main:
+    web-application-type: reactive
+  data:
+    mongodb:
+      uri: mongodb://localhost:30001,localhost:30002,localhost:30003/order?replicaSet=rs0
+      database: order
+
+management:
+  endpoints:
+    web.exposure.include: "*"
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        service.order.get: true
+        service.order.create: true
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+
+logging:
+  level:
+    root: info
+    com.acme: debug
+  pattern:
+    level: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}]"

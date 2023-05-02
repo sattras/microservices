@@ -1,0 +1,20 @@
+{
+  "type":"record",
+  "name":"EventValue",
+  "namespace":"com.acme.kafka.outbox.avro",
+  "fields":[
+    {
+      "name":"eventType",
+      "type":"string"
+    },
+    {
+      "name":"timestamp",
+      "type":"long"
+    },
+    {
+      "name":"payload",
+      "type":"string"
+    }
+  ],
+  "connect.name":"com.acme.kafka.outbox.avro.EventValue"
+}
